@@ -277,12 +277,14 @@ async function showNanny(){
   $id('nanny-month').value=nannyMonth;
   updateNannyMonthLabel();
   loadNannyData();
+  await loadCalEvents();
 }
 
 window.onNannyMonthChange = function(){
   nannyMonth=$id('nanny-month').value;
   updateNannyMonthLabel();
   loadNannyData();
+  await loadCalEvents();
 };
 function updateNannyMonthLabel(){
   $id('nanny-month-lbl').textContent=monthLabel(nannyMonth);
@@ -511,6 +513,149 @@ window.savePDF = function(){
 };
 
 window.onAdminMonthChange = function(){ loadAdminGlobal(); };
+
+// ── CALENDAR ──────────────────────────────────────────────────────────────────
+let calCurrentView='month', calDate=new Date(), calEvents=[], editingEventId=null;
+
+window.showSection=function(sec){
+  $id('reg-section').style.display=sec==='reg'?'block':'none';
+  $id('cal-section').style.display=sec==='cal'?'block':'none';
+  $id('nav-reg').classList.toggle('nav-active',sec==='reg');
+  $id('nav-cal').classList.toggle('nav-active',sec==='cal');
+  if(sec==='cal') renderCal();
+};
+
+window.calView=function(v){
+  calCurrentView=v;
+  $id('cal-tab-month').classList.toggle('active',v==='month');
+  $id('cal-tab-week').classList.toggle('active',v==='week');
+  renderCal();
+};
+window.calPrev=function(){ if(calCurrentView==='month'){calDate.setMonth(calDate.getMonth()-1);}else{calDate.setDate(calDate.getDate()-7);} renderCal(); };
+window.calNext=function(){ if(calCurrentView==='month'){calDate.setMonth(calDate.getMonth()+1);}else{calDate.setDate(calDate.getDate()+7);} renderCal(); };
+
+function renderCal(){ calCurrentView==='month'?renderMonth():renderWeek(); }
+
+function renderMonth(){
+  const y=calDate.getFullYear(),m=calDate.getMonth();
+  const MONTHS=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  $id('cal-title').textContent=MONTHS[m]+' '+y;
+  const first=new Date(y,m,1),last=new Date(y,m+1,0);
+  const startDay=(first.getDay()+6)%7;
+  const today=new Date(); today.setHours(0,0,0,0);
+  let html='<div class="month-grid">';
+  ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].forEach(d=>{html+=`<div class="month-day-name">${d}</div>`;});
+  for(let i=0;i<startDay;i++){const d=new Date(y,m,1-startDay+i);html+=`<div class="month-day other-month"><div class="day-num">${d.getDate()}</div></div>`;}
+  for(let d=1;d<=last.getDate();d++){
+    const date=new Date(y,m,d);date.setHours(0,0,0,0);
+    const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday=date.getTime()===today.getTime();
+    const dayEvs=calEvents.filter(e=>e.date===ds);
+    const isAvail=dayEvs.length===0;
+    html+=`<div class="month-day${isToday?' today':''}" onclick="openAddEvent('${ds}')">
+      <div class="day-num">${d}</div>
+      ${dayEvs.map(e=>`<div class="cal-event ${e.type}" onclick="event.stopPropagation();openEditEvent('${e.id}')">${e.type==='service'?(e.family||'Servicio'):(e.notes||'Bloqueado')}${e.from?' · '+e.from:''}</div>`).join('')}
+      ${isAvail?'<div class="avail-dot"></div>':''}
+    </div>`;
+  }
+  const total=startDay+last.getDate();const rem=(7-total%7)%7;
+  for(let i=1;i<=rem;i++){html+=`<div class="month-day other-month"><div class="day-num">${i}</div></div>`;}
+  html+='</div>';
+  $id('cal-body').innerHTML=html;
+}
+
+function renderWeek(){
+  const d=new Date(calDate);
+  const day=d.getDay();const diff=d.getDate()-(day===0?6:day-1);
+  const mon=new Date(d.setDate(diff));
+  const days=[];for(let i=0;i<7;i++){const dd=new Date(mon);dd.setDate(mon.getDate()+i);days.push(dd);}
+  const MONTHS=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const DAY_NAMES=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  $id('cal-title').textContent=`${days[0].getDate()} ${MONTHS[days[0].getMonth()]} — ${days[6].getDate()} ${MONTHS[days[6].getMonth()]} ${days[6].getFullYear()}`;
+  const hours=[];for(let h=7;h<=23;h++)hours.push(h);
+  const today=new Date();today.setHours(0,0,0,0);
+  let html='<div class="week-grid">';
+  html+='<div class="week-header"></div>';
+  days.forEach((d,i)=>{const isToday=d.getTime()===today.getTime();html+=`<div class="week-header" style="${isToday?'background:var(--acc);':''}">${DAY_NAMES[i]}<br>${d.getDate()} ${MONTHS[d.getMonth()]}</div>`;});
+  hours.forEach(h=>{
+    html+=`<div class="week-time">${h}:00</div>`;
+    days.forEach(d=>{
+      const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const evs=calEvents.filter(e=>{if(e.date!==ds)return false;const[eh]=(e.from||'00:00').split(':').map(Number);return eh===h;});
+      html+=`<div class="week-cell" onclick="openAddEvent('${ds}','${String(h).padStart(2,'0')}:00')">${evs.map(e=>`<div class="week-event ${e.type}" onclick="event.stopPropagation();openEditEvent('${e.id}')">${e.type==='service'?(e.family||'Servicio'):(e.notes||'Bloqueado')}</div>`).join('')}</div>`;
+    });
+  });
+  html+='</div>';
+  $id('cal-body').innerHTML=html;
+}
+
+window.openAddEvent=function(date,time){
+  editingEventId=null;
+  $id('modal-title').textContent='Nuevo evento';
+  $id('ev-type').value='service';
+  $id('ev-family').value='';$id('ev-rate-client').value='';$id('ev-rate-me').value='';
+  $id('ev-date').value=date||'';$id('ev-from').value=time||'';$id('ev-to').value='';$id('ev-notes').value='';
+  $id('btn-del-event').style.display='none';
+  onEvTypeChange();
+  $id('event-modal').style.display='flex';
+};
+
+window.openEditEvent=function(id){
+  const ev=calEvents.find(e=>e.id===id);if(!ev)return;
+  editingEventId=id;
+  $id('modal-title').textContent='Editar evento';
+  $id('ev-type').value=ev.type;$id('ev-family').value=ev.family||'';
+  $id('ev-rate-client').value=ev.rateClient||'';$id('ev-rate-me').value=ev.rateMe||'';
+  $id('ev-date').value=ev.date||'';$id('ev-from').value=ev.from||'';$id('ev-to').value=ev.to||'';$id('ev-notes').value=ev.notes||'';
+  $id('btn-del-event').style.display='block';
+  onEvTypeChange();
+  $id('event-modal').style.display='flex';
+};
+
+window.onEvTypeChange=function(){$id('ev-service-fields').style.display=$id('ev-type').value==='service'?'block':'none';};
+window.closeModal=function(){$id('event-modal').style.display='none';};
+
+window.saveEvent=async function(){
+  const type=$id('ev-type').value,date=$id('ev-date').value;
+  if(!date){alert('Pon una fecha.');return;}
+  const ev={id:editingEventId||crypto.randomUUID(),type,date,
+    from:$id('ev-from').value,to:$id('ev-to').value,
+    family:$id('ev-family').value.trim(),
+    rateClient:$id('ev-rate-client').value,rateMe:$id('ev-rate-me').value,
+    notes:$id('ev-notes').value.trim()};
+  if(editingEventId) calEvents=calEvents.filter(e=>e.id!==editingEventId);
+  calEvents.push(ev);
+  // Sync service to cobros table
+  if(type==='service'&&ev.from&&ev.to&&ev.family){
+    const exists=nannyRows.find(r=>r.date===date&&r.family===ev.family&&r.from===ev.from);
+    if(!exists){
+      const nr=newRow();
+      nr.family=ev.family;nr.date=date;nr.from=ev.from;nr.to=ev.to;
+      nr.rateMe=ev.rateMe;nr.rateClient=ev.rateClient;
+      nannyRows.push(nr);renderNannyTable();nannyRecalc();schedSave();
+    }
+  }
+  await saveCalEvents();
+  closeModal();renderCal();
+};
+
+window.deleteEvent=async function(){
+  if(!editingEventId||!confirm('¿Eliminar este evento?'))return;
+  calEvents=calEvents.filter(e=>e.id!==editingEventId);
+  await saveCalEvents();closeModal();renderCal();
+};
+
+async function saveCalEvents(){
+  if(!currentUser||!db)return;
+  await fsSetDoc(fsDoc(db,'calendars',currentUser.uid),{uid:currentUser.uid,events:calEvents,updatedAt:new Date().toISOString()});
+}
+
+async function loadCalEvents(){
+  if(!currentUser||!db)return;
+  const snap=await fsGetDoc(fsDoc(db,'calendars',currentUser.uid));
+  calEvents=snap.exists()?(snap.data().events||[]):[];
+}
+
 </script>
 
 <style>
@@ -654,6 +799,50 @@ select.pay{width:100%;border:1.5px solid;border-radius:7px;padding:5px 6px;font-
   table{min-width:unset!important;}
   input,select{border:none!important;background:transparent!important;}
 }
+
+/* CALENDAR */
+.cal-tabs{display:flex;gap:0;background:var(--warm);border-bottom:2px solid #e8ddd4;margin-bottom:20px;}
+.cal-tab{padding:10px 18px;border:none;background:none;font-size:.83rem;font-weight:500;color:var(--mid);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;}
+.cal-tab.active{color:var(--acc);border-bottom-color:var(--acc);}
+.cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;}
+.cal-nav{display:flex;align-items:center;gap:10px;}
+.cal-nav button{background:white;border:1.5px solid var(--warm);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:.85rem;color:var(--deep);}
+.cal-nav h3{font-size:1rem;font-weight:700;color:var(--deep);min-width:160px;text-align:center;}
+.month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;background:var(--warm);border-radius:12px;overflow:hidden;border:1.5px solid var(--warm);}
+.month-day-name{background:var(--deep);color:var(--cream);text-align:center;padding:8px 4px;font-size:.68rem;font-weight:600;text-transform:uppercase;}
+.month-day{background:white;min-height:80px;padding:4px;cursor:pointer;position:relative;transition:background .15s;}
+.month-day:hover{background:#faf6f1;}
+.month-day.other-month{background:#f9f9f9;opacity:.6;}
+.month-day.today{background:#fff8f4;}
+.month-day .day-num{font-size:.75rem;font-weight:600;color:var(--mid);margin-bottom:3px;}
+.month-day.today .day-num{color:var(--acc);font-weight:700;}
+.cal-event{border-radius:4px;padding:2px 5px;font-size:.65rem;font-weight:500;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.cal-event.service{background:#f0f0f0;color:#555;border-left:3px solid #999;}
+.cal-event.blocked{background:#ffe5e5;color:var(--red);border-left:3px solid var(--red);}
+.avail-dot{width:8px;height:8px;border-radius:50%;background:var(--green);position:absolute;bottom:4px;right:4px;}
+.week-grid{display:grid;grid-template-columns:55px repeat(7,1fr);gap:1px;background:var(--warm);border-radius:12px;overflow:hidden;border:1.5px solid var(--warm);}
+.week-header{background:var(--deep);color:var(--cream);text-align:center;padding:7px 3px;font-size:.68rem;font-weight:500;}
+.week-time{background:#f5f5f5;padding:3px 5px;font-size:.62rem;color:var(--light);text-align:right;border-bottom:1px solid #eee;min-height:38px;display:flex;align-items:flex-start;justify-content:flex-end;}
+.week-cell{background:white;border-bottom:1px solid #f0f0f0;min-height:38px;position:relative;cursor:pointer;}
+.week-cell:hover{background:#faf6f1;}
+.week-event{position:absolute;left:1px;right:1px;border-radius:4px;padding:2px 4px;font-size:.6rem;font-weight:500;overflow:hidden;cursor:pointer;z-index:1;}
+.week-event.service{background:#f0f0f0;color:#555;border-left:3px solid #999;}
+.week-event.blocked{background:#ffe5e5;color:var(--red);border-left:3px solid var(--red);}
+.cal-legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:.75rem;color:var(--mid);}
+.legend-dot{width:12px;height:12px;border-radius:3px;display:inline-block;margin-right:4px;}
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;}
+.modal-box{background:white;border-radius:16px;padding:24px;max-width:400px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.15);}
+.modal-box h3{font-size:1rem;font-weight:700;margin-bottom:16px;color:var(--deep);}
+.modal-field{margin-bottom:12px;}
+.modal-field label{font-size:.72rem;text-transform:uppercase;letter-spacing:.8px;color:var(--light);display:block;margin-bottom:4px;}
+.modal-field input,.modal-field select,.modal-field textarea{width:100%;border:1.5px solid #e8ddd4;border-radius:8px;padding:8px 10px;font-size:.85rem;color:var(--deep);background:var(--cream);outline:none;font-family:inherit;}
+.modal-actions{display:flex;gap:10px;margin-top:16px;}
+.btn-modal-save{flex:1;padding:9px;border-radius:9px;border:none;background:var(--acc);color:white;font-size:.85rem;font-weight:600;cursor:pointer;}
+.btn-modal-del{padding:9px 14px;border-radius:9px;border:none;background:#fff0ef;color:var(--red);font-size:.85rem;cursor:pointer;}
+.btn-modal-cancel{padding:9px 14px;border-radius:9px;border:none;background:var(--warm);color:var(--mid);font-size:.85rem;cursor:pointer;}
+.nav-tab{flex:1;padding:12px;border:none;background:none;font-size:.85rem;font-weight:500;cursor:pointer;color:var(--mid);border-bottom:2px solid transparent;transition:all .15s;}
+.nav-tab.nav-active{color:var(--acc);font-weight:700;border-bottom-color:var(--acc);}
+
 </style>
 </head>
 <body>
@@ -794,11 +983,71 @@ select.pay{width:100%;border:1.5px solid;border-radius:7px;padding:5px 6px;font-
       </div>
     </div>
 
-    <div class="notes-box no-print">
-      <label>Notas</label>
-      <textarea id="nanny-notes" placeholder="Observaciones…" oninput="schedSave()"></textarea>
+    <!-- NAV TABS -->
+    <div style="display:flex;background:white;border-radius:14px;border:1.5px solid var(--warm);overflow:hidden;margin-bottom:20px;" class="no-print">
+      <button id="nav-reg" class="nav-tab nav-active" onclick="showSection('reg')">📋 Registros</button>
+      <button id="nav-cal" class="nav-tab" onclick="showSection('cal')">📅 Agenda</button>
     </div>
-    <button class="btn-pdf no-print" onclick="savePDF()">📄 Guardar PDF</button>
+
+    <div id="reg-section">
+      <div class="notes-box no-print">
+        <label>Notas</label>
+        <textarea id="nanny-notes" placeholder="Observaciones…" oninput="schedSave()"></textarea>
+      </div>
+      <button class="btn-pdf no-print" onclick="savePDF()">📄 Guardar PDF</button>
+    </div>
+
+    <div id="cal-section" style="display:none">
+      <div class="cal-tabs">
+        <button class="cal-tab active" id="cal-tab-month" onclick="calView('month')">📅 Mes</button>
+        <button class="cal-tab" id="cal-tab-week" onclick="calView('week')">📋 Semana</button>
+      </div>
+      <div class="cal-header">
+        <div class="cal-nav">
+          <button onclick="calPrev()">‹</button>
+          <h3 id="cal-title"></h3>
+          <button onclick="calNext()">›</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <div class="cal-legend">
+            <span><span class="legend-dot" style="background:#e0e0e0"></span>Servicio</span>
+            <span><span class="legend-dot" style="background:var(--green)"></span>Disponible</span>
+            <span><span class="legend-dot" style="background:#ffaaaa"></span>Bloqueado</span>
+          </div>
+          <button class="btn-add" onclick="openAddEvent(null)" style="font-size:.78rem;padding:6px 12px;">＋ Añadir</button>
+        </div>
+      </div>
+      <div id="cal-body"></div>
+    </div>
+
+    <div class="modal-overlay" id="event-modal" style="display:none" onclick="if(event.target===this)closeModal()">
+      <div class="modal-box">
+        <h3 id="modal-title">Nuevo evento</h3>
+        <div class="modal-field"><label>Tipo</label>
+          <select id="ev-type" onchange="onEvTypeChange()">
+            <option value="service">🏠 Servicio HoliKids</option>
+            <option value="blocked">🔴 Bloqueado / No disponible</option>
+          </select>
+        </div>
+        <div id="ev-service-fields">
+          <div class="modal-field"><label>Familia</label><input type="text" id="ev-family" placeholder="Familia Sozzi…"></div>
+          <div class="modal-field"><label>Precio cliente €/h</label><input type="number" id="ev-rate-client" placeholder="29,00"></div>
+          <div class="modal-field"><label>Tu tarifa €/h</label><input type="number" id="ev-rate-me" placeholder="15,00"></div>
+        </div>
+        <div class="modal-field"><label>Fecha</label><input type="date" id="ev-date"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="modal-field"><label>Entrada</label><input type="time" id="ev-from"></div>
+          <div class="modal-field"><label>Salida</label><input type="time" id="ev-to"></div>
+        </div>
+        <div class="modal-field"><label>Notas</label><textarea id="ev-notes" rows="2" placeholder="Observaciones…"></textarea></div>
+        <div class="modal-actions">
+          <button class="btn-modal-save" onclick="saveEvent()">Guardar</button>
+          <button class="btn-modal-del" id="btn-del-event" onclick="deleteEvent()" style="display:none">Eliminar</button>
+          <button class="btn-modal-cancel" onclick="closeModal()">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
