@@ -420,6 +420,34 @@ window.selFam = function(id,name){
   renderNannyTable(); nannyRecalc(); schedSave();
 };
 
+
+function syncRowsToCal(){
+  // Remove all service events that came from rows
+  calEvents = calEvents.filter(e => e.type !== 'service' || e.fromRow);
+  // Wait — better approach: rebuild service events from nannyRows
+  const rowEvents = nannyRows
+    .filter(r => r.family && r.date && r.from && r.to)
+    .map(r => ({
+      id: 'row-' + r.id,
+      type: 'service',
+      fromRow: true,
+      date: r.date,
+      from: r.from,
+      to: r.to,
+      family: r.family,
+      rateMe: r.rateMe,
+      rateClient: r.rateClient,
+      notes: ''
+    }));
+  // Keep manually added cal events (not fromRow) + blocked events
+  const manualEvents = calEvents.filter(e => !e.fromRow);
+  calEvents = [...manualEvents, ...rowEvents];
+  // Re-render if calendar is visible
+  if($id('cal-section') && $id('cal-section').style.display !== 'none'){
+    renderCal();
+  }
+}
+
 function nannyRecalc(){
   let totMine=0,totH=0,totHoli=0;
   let cashRecv=0,cashOweHoli=0,cashOweHotel=0,cashN=0;
@@ -503,6 +531,7 @@ function nannyRecalc(){
       </div>
     </div>`;
   }).join('');
+  syncRowsToCal();
 }
 
 window.savePDF = function(){
@@ -633,6 +662,10 @@ window.saveEvent=async function(){
       nr.family=ev.family;nr.date=date;nr.from=ev.from;nr.to=ev.to;
       nr.rateMe=ev.rateMe;nr.rateClient=ev.rateClient;
       nannyRows.push(nr);renderNannyTable();nannyRecalc();schedSave();
+    } else {
+      // Update existing row
+      const r=nannyRows.find(r=>r.date===date&&r.family===ev.family&&r.from===ev.from);
+      if(r){ r.to=ev.to; r.rateMe=ev.rateMe; r.rateClient=ev.rateClient; renderNannyTable(); nannyRecalc(); schedSave(); }
     }
   }
   await saveCalEvents();
@@ -934,6 +967,7 @@ select.pay{width:100%;border:1.5px solid;border-radius:7px;padding:5px 6px;font-
     <div class="hdr-right">
       <img src="data:image/jpeg;base64,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" style="height:44px;border-radius:8px;" alt="HoliKids">
       <input type="month" id="nanny-month" onchange="onNannyMonthChange()">
+      <button class="btn-pdf no-print" onclick="savePDF()" style="padding:5px 12px;font-size:.78rem;">📄 PDF</button>
       <button class="btn-logout no-print" onclick="doLogout()">Cerrar sesión</button>
     </div>
   </header>
@@ -994,7 +1028,6 @@ select.pay{width:100%;border:1.5px solid;border-radius:7px;padding:5px 6px;font-
         <label>Notas</label>
         <textarea id="nanny-notes" placeholder="Observaciones…" oninput="schedSave()"></textarea>
       </div>
-      <button class="btn-pdf no-print" onclick="savePDF()">📄 Guardar PDF</button>
     </div>
 
     <div id="cal-section" style="display:none">
