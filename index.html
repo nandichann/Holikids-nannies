@@ -302,6 +302,7 @@ async function loadNannyData(){
   }
   renderNannyTable();
   nannyRecalc();
+  syncRowsToCal();
 }
 
 function schedSave(){
@@ -422,9 +423,7 @@ window.selFam = function(id,name){
 
 
 function syncRowsToCal(){
-  // Remove all service events that came from rows
-  calEvents = calEvents.filter(e => e.type !== 'service' || e.fromRow);
-  // Wait — better approach: rebuild service events from nannyRows
+  // Build fresh service events from nannyRows
   const rowEvents = nannyRows
     .filter(r => r.family && r.date && r.from && r.to)
     .map(r => ({
@@ -439,13 +438,11 @@ function syncRowsToCal(){
       rateClient: r.rateClient,
       notes: ''
     }));
-  // Keep manually added cal events (not fromRow) + blocked events
+  // Keep only manual (non-fromRow) events + blocked events, replace fromRow ones
   const manualEvents = calEvents.filter(e => !e.fromRow);
   calEvents = [...manualEvents, ...rowEvents];
-  // Re-render if calendar is visible
-  if($id('cal-section') && $id('cal-section').style.display !== 'none'){
-    renderCal();
-  }
+  // Always re-render calendar
+  if($id('cal-body')) renderCal();
 }
 
 function nannyRecalc(){
@@ -551,7 +548,7 @@ window.showSection=function(sec){
   $id('cal-section').style.display=sec==='cal'?'block':'none';
   $id('nav-reg').classList.toggle('nav-active',sec==='reg');
   $id('nav-cal').classList.toggle('nav-active',sec==='cal');
-  if(sec==='cal') renderCal();
+  if(sec==='cal'){ syncRowsToCal(); renderCal(); }
 };
 
 window.calView=function(v){
