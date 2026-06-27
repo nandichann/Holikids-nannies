@@ -578,10 +578,12 @@ function renderMonth(){
     const isToday=date.getTime()===today.getTime();
     const dayEvs=calEvents.filter(e=>e.date===ds);
     const isAvail=dayEvs.length===0;
-    html+=`<div class="month-day${isToday?' today':''}" onclick="openAddEvent('${ds}')">
+    const hasService=dayEvs.some(e=>e.type==='service');
+    const hasBlocked=dayEvs.some(e=>e.type==='blocked');
+    const bgColor = hasBlocked ? '#fff0f0' : hasService ? '#ffffff' : '#f0fff4';
+    html+=`<div class="month-day${isToday?' today':''}" style="background:${bgColor}" onclick="openAddEvent('${ds}')">
       <div class="day-num">${d}</div>
       ${dayEvs.map(e=>`<div class="cal-event ${e.type}" onclick="event.stopPropagation();openEditEvent('${e.id}')">${e.type==='service'?(e.family||'Servicio'):(e.notes||'Bloqueado')}${e.from?' · '+e.from:''}</div>`).join('')}
-      ${isAvail?'<div class="avail-dot"></div>':''}
     </div>`;
   }
   const total=startDay+last.getDate();const rem=(7-total%7)%7;
@@ -608,7 +610,10 @@ function renderWeek(){
     days.forEach(d=>{
       const ds=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       const evs=calEvents.filter(e=>{if(e.date!==ds)return false;const[eh]=(e.from||'00:00').split(':').map(Number);return eh===h;});
-      html+=`<div class="week-cell" onclick="openAddEvent('${ds}','${String(h).padStart(2,'0')}:00')">${evs.map(e=>`<div class="week-event ${e.type}" onclick="event.stopPropagation();openEditEvent('${e.id}')">${e.type==='service'?(e.family||'Servicio'):(e.notes||'Bloqueado')}</div>`).join('')}</div>`;
+      const cellHasService=evs.some(e=>e.type==='service');
+      const cellHasBlocked=evs.some(e=>e.type==='blocked');
+      const cellBg=cellHasBlocked?'#fff0f0':cellHasService?'#ffffff':'';
+      html+=`<div class="week-cell" style="${cellBg?'background:'+cellBg:''}" onclick="openAddEvent('${ds}','${String(h).padStart(2,'0')}:00')">${evs.map(e=>`<div class="week-event ${e.type}" onclick="event.stopPropagation();openEditEvent('${e.id}')">${e.type==='service'?(e.family||'Servicio'):(e.notes||'Bloqueado')}</div>`).join('')}</div>`;
     });
   });
   html+='</div>';
@@ -642,37 +647,65 @@ window.onEvTypeChange=function(){$id('ev-service-fields').style.display=$id('ev-
 window.closeModal=function(){$id('event-modal').style.display='none';};
 
 window.saveEvent=async function(){
-  const type=$id('ev-type').value,date=$id('ev-date').value;
+  const type=$id('ev-type').value;
+  const date=$id('ev-date').value;
+  const from=$id('ev-from').value;
+  const to=$id('ev-to').value;
+  const family=$id('ev-family').value.trim();
+  const rateClient=$id('ev-rate-client').value;
+  const rateMe=$id('ev-rate-me').value;
+  const notes=$id('ev-notes').value.trim();
+
   if(!date){alert('Pon una fecha.');return;}
-  const ev={id:editingEventId||crypto.randomUUID(),type,date,
-    from:$id('ev-from').value,to:$id('ev-to').value,
-    family:$id('ev-family').value.trim(),
-    rateClient:$id('ev-rate-client').value,rateMe:$id('ev-rate-me').value,
-    notes:$id('ev-notes').value.trim()};
+
+  const ev={
+    id: editingEventId||crypto.randomUUID(),
+    type, date, from, to, family, rateClient, rateMe, notes,
+    fromRow: false
+  };
+
+  // Remove old version if editing
   if(editingEventId) calEvents=calEvents.filter(e=>e.id!==editingEventId);
   calEvents.push(ev);
-  // Sync service to cobros table
-  if(type==='service'&&ev.from&&ev.to&&ev.family){
-    const exists=nannyRows.find(r=>r.date===date&&r.family===ev.family&&r.from===ev.from);
-    if(!exists){
+
+  // Sync to Registros table if it's a service
+  if(type==='service' && from && to && family){
+    const existingRow = nannyRows.find(r=>r.date===date && r.family===family && r.from===from);
+    if(!existingRow){
       const nr=newRow();
-      nr.family=ev.family;nr.date=date;nr.from=ev.from;nr.to=ev.to;
-      nr.rateMe=ev.rateMe;nr.rateClient=ev.rateClient;
-      nannyRows.push(nr);renderNannyTable();nannyRecalc();schedSave();
+      nr.family=family; nr.date=date; nr.from=from; nr.to=to;
+      nr.rateMe=rateMe; nr.rateClient=rateClient;
+      nannyRows.push(nr);
     } else {
-      // Update existing row
-      const r=nannyRows.find(r=>r.date===date&&r.family===ev.family&&r.from===ev.from);
-      if(r){ r.to=ev.to; r.rateMe=ev.rateMe; r.rateClient=ev.rateClient; renderNannyTable(); nannyRecalc(); schedSave(); }
+      existingRow.to=to; existingRow.rateMe=rateMe; existingRow.rateClient=rateClient;
     }
+    renderNannyTable(); nannyRecalc(); schedSave();
   }
-  await saveCalEvents();
-  closeModal();renderCal();
+
+  // Save blocked events to Firebase
+  if(type==='blocked'){
+    await saveCalEvents();
+  }
+
+  closeModal();
+  syncRowsToCal();
+  renderCal();
 };
 
 window.deleteEvent=async function(){
   if(!editingEventId||!confirm('¿Eliminar este evento?'))return;
+  const ev=calEvents.find(e=>e.id===editingEventId);
+  // If it's a row-synced event, remove from nannyRows too
+  if(ev && ev.fromRow){
+    const rowId=editingEventId.replace('row-','');
+    nannyRows=nannyRows.filter(r=>r.id!==rowId);
+    renderNannyTable(); nannyRecalc(); schedSave();
+  }
   calEvents=calEvents.filter(e=>e.id!==editingEventId);
-  await saveCalEvents();closeModal();renderCal();
+  await saveCalEvents();
+  closeModal();
+  syncRowsToCal();
+  renderCal();
 };
 
 async function saveCalEvents(){
